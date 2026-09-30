@@ -110,5 +110,11 @@ buildNumber.properties
 
 # Common working directory
 run/
+runs/
 /.gradle
 /build
+/repo
+
+# NeoForge generated sources
+/src/generated
+**/src/generated/**/.cache/

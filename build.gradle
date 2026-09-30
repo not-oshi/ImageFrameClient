@@ -1,57 +1,120 @@
 plugins {
-    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'java-library'
     id 'maven-publish'
+    id 'net.neoforged.moddev' version "${moddevgradle_version}"
+    id 'idea'
 }
 
-version = project.mod_version
-group = project.maven_group
+version = mod_version
+group = mod_group_id
 
 base {
-    archivesName = "${project.archives_base_name}-${project.minecraft_version}-fabric"
+    archivesName = "${archives_base_name}-${minecraft_version}-neoforge"
 }
 
 repositories {
-    maven { url "https://maven.shedaniel.me/" }
-    maven { url "https://maven.terraformersmc.com/releases/" }
-    maven { url "https://api.modrinth.com/maven" }
-}
-
-dependencies {
-    minecraft("com.mojang:minecraft:${project.minecraft_version}")
-    implementation("net.fabricmc:fabric-loader:${project.loader_version}")
-    implementation("net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}")
-    implementation include ("maven.modrinth:midnightlib:${project.midnightlib_version}")
-    implementation("com.terraformersmc:modmenu:${project.modmenu_version}")
-}
-
-processResources {
-    inputs.property "version", project.version
-    filesMatching("fabric.mod.json") {
-        expand "version": project.version
+    // MidnightLib (MidnightConfig) is published on the Modrinth maven.
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+        content {
+            includeGroup 'maven.modrinth'
+        }
     }
 }
 
-tasks.withType(JavaCompile).configureEach {
-    it.options.release = 25
+// Mojang ships Java 25 to end users in 26.2, so mods should target Java 25.
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+
+neoForge {
+    version = project.neo_version
+
+    // Default run configurations. This mod is a client side only mod, so only the client
+    // (and the data generator, which is a client side entry point as well) is needed.
+    runs {
+        client {
+            client()
+        }
+
+        data {
+            clientData()
+            programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        }
+
+        // applies to all the run configs above
+        configureEach {
+            // Recommended logging level for the console
+            logLevel = org.slf4j.event.Level.DEBUG
+        }
+    }
+
+    mods {
+        // define mod <-> source bindings, used to tell the game which sources belong to which mod
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
 }
 
-java {
-    withSourcesJar()
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
+// Sets up a dependency configuration called 'localRuntime'.
+// This configuration should be used instead of 'runtimeOnly' to declare
+// a dependency that will be present for runtime testing but that is
+// "optional", meaning it will not be pulled by dependents of this mod.
+configurations {
+    runtimeClasspath.extendsFrom localRuntime
 }
+
+dependencies {
+    // MidnightLib provides the MidnightConfig library (and its config screen) used by this mod.
+    // The API is only needed at compile time, the full artifact is used while running the game.
+    compileOnly "maven.modrinth:midnightlib:${midnightlib_version}"
+    localRuntime "maven.modrinth:midnightlib:${midnightlib_version}"
+}
+
+// This block of code expands all declared replace properties in the specified resource targets.
+// A missing property will result in an error. Properties are expanded using ${} Groovy notation.
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+// Include the output of "generateModMetadata" as an input directory for the build
+// this works both when building through Gradle and from the IDE.
+sourceSets.main.resources.srcDir generateModMetadata
+// To avoid having to run "generateModMetadata" manually, make it run on every project reload
+neoForge.ideSyncTask generateModMetadata
 
 jar {
     from("LICENSE") {
-        rename { "${it}_${project.base.archivesName.get()}"}
+        rename { "${it}_${project.base.archivesName.get()}" }
     }
 }
 
 publishing {
     publications {
-        create("mavenJava", MavenPublication) {
+        register('mavenJava', MavenPublication) {
             artifactId = project.archives_base_name
             from components.java
         }
     }
+    repositories {
+        maven {
+            url "file://${project.projectDir}/repo"
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
+    options.release = 25
 }
